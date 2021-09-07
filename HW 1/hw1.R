@@ -1,6 +1,4 @@
 # HW1
-#your final answers and your final R script can be uploaded via the link below:
-#https://forms.gle/qo6XoLamepNuJNcT9
 
 "One of the mayor of Chicago's priority this year is equity in pay for city employees,
 especially in some of the city's largest departments. Her office has provided you a dataset
