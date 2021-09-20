@@ -22,7 +22,7 @@ Name your new columns first_name, middle_name, last_name.
 #if you write any code for the problem, please include your code/work here
 
 library(tidyverse)
-`%nin%` = Negate(`%in%`) # For wrangling ssa / gender data
+`%nin%` <- Negate(`%in%`) # For wrangling ssa / gender data
 
 data_raw <- read_csv(here::here("data", "salary_data_full.csv"))
 
@@ -32,6 +32,8 @@ data <- data_raw %>%
            into = c("LAST_NAME", "FIRST_NAME"),
            sep = "\\,") %>%
   mutate(
+    # Remove suffixes like Jr from last name
+    LAST_NAME = str_extract(LAST_NAME, "^[A-Z]+"),
     # Extract middle initial with regex
     MIDDLE_INITIAL = str_extract(FIRST_NAME, "\\s[A-Z]$") %>%
            str_remove("\\s"),
@@ -80,41 +82,40 @@ ssa_raw <- read_csv(here::here("data", "IL.TXT"),
                     col_names = c("STATE", "GENDER", "YEAR","FIRST_NAME", "COUNT")) # Where count is the number of occurrences of that name in the given year
 
 ssa <- ssa_raw %>%
-  select(GENDER, FIRST_NAME) %>%
   mutate(
     # Get FIRST_NAME into uppercase form for joining
-    FIRST_NAME = str_to_upper(FIRST_NAME)) %>%
-  distinct()
+    FIRST_NAME = str_to_upper(FIRST_NAME)
+    ) %>%
+  group_by(FIRST_NAME, GENDER) %>%
+  summarize(COUNT = sum(COUNT),
+            GENDER = GENDER) %>%
+  # Remove duplicates
+  distinct() %>%
+  # We'll be taking the simple max() of COUNT to determine gender
+  # for a given name
+  group_by(FIRST_NAME) %>%
+  filter(COUNT == max(COUNT)) %>%
+  # There are four ties in the dataset
+  # CHARLY, CODI, MICKY, and TRUE have equal COUNT values
+  # between genders. We'll remove them
+  filter(FIRST_NAME %nin% c("CHARLY", "CODI", "MICKY", "TRUE")) %>%
+  ungroup()
 
-# Some names are ambiguous, meaning they are coded both F & M in the ssa data
-# We fix that by removing them from the data, which essentially codes
-# ambiguous names as NA. We could more accurately code gender if employee
-# salary data was provided with employee age or date of birth. 
-# But without that information we will see a significant decrease in 
-# gender-coded employees using this data.
-# Names that would conventionally be coded for a specific gender were found to
-# have multiple genders across years. These names include "James", "Addison",
-# "Pamela", "Corey", and more. We could generate a gender_odds column, but 
-# that seems outside the scope of this homework assignment...
-ambiguous <- ssa %>%
-  count(FIRST_NAME) %>%
-  filter(n == 2) %>%
-  pull(FIRST_NAME) 
-
-ssa <- ssa %>%
-  filter(FIRST_NAME %nin% ambiguous)
+# Test for duplicates
+# ssa %>%
+#   count(FIRST_NAME) %>%
+#   arrange(desc(n))
 
 data <- data %>%
   left_join(ssa, by = c("FIRST_NAME")) %>%
   mutate(NEW_GENDER = as.factor(GENDER)) %>%
   select(FIRST_NAME, MIDDLE_INITIAL, LAST_NAME, 
+         JOB_TITLES = "Job Titles",
+         DEPARTMENT = "Department",
          NEW_GENDER, 
          ANNUAL_SALARY)
 
-summary(data$NEW_GENDER) # 21,547 NA values in NEW_GENDER, or 67% of employees
-# Conclusion: Without more data, a raw join of SSA names/genders to employee data
-# will provide little coverage for imputing gender information with  an acceptable 
-# level of accuracy. 
+summary(data$NEW_GENDER) # 2,762 NA values in NEW_GENDER, or ~9% of employees
 
 
 #---PROBLEM 4---
