@@ -1,0 +1,69 @@
+---
+title: "Report on Boston 311 Call Performance"
+author: "Ethan Jantz"
+date: "10/19/2021"
+output:
+  pdf_document: default
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+options(scipen = 9999)
+library(dplyr)
+library(forcats)
+library(ggplot2)
+library(here)
+library(kableExtra)
+library(lubridate)
+library(patchwork)
+library(readr)
+
+source(here("Scripts", "funs.R"))
+load(here("Data", "analysis.RData"))
+```
+
+As per request by the City of Boston, the Citywide Analytics Team has been asked to produce a report on the efficiency of the City's 311 services. The following is a report detailing three metrics created from the provided 311 call data and how the city and its departments perform in terms of their efficiency in closing calls. A "closed" call is a call that has been responded to regardless of whether the call issue was resolved or not. The data used in this analysis includes all "closed" calls made between 1-1-2020 and 10-3-2021.  
+
+Close time, or the amount of time that passes from receipt of a 311 call until it is closed, is the target of this analysis and one of the three metrics used to understand 311 service performance. It is the most basic unit of performance, and is aggregated to an average at the city and department level. Close time is complimented by the percentage of calls completed within the target close time as well as the difference between the close time and the target time. The percentage of calls completed on time provides an insight into how the city and its departments are performing in terms of haste. The differential between close time and target time helps develop a nuanced understanding of departmental performance based on its own metrics.
+
+# Analysis
+
+In aggregate, the city closes calls within a week with 89% of calls completed on time. By its own metrics, the city completes its average 311 call 16 days before its target close time. Without alternative data to compare this to from other cities or earlier periods there is little more to say. Our team notes that these statistics point to good overall performance by the city. 
+
+```{r city_wide_summary}
+city_summary_table %>%
+      kableExtra::kbl(caption = "City-Wide Close Time Metrics", format = "latex") %>%
+      kableExtra::kable_styling()
+```
+
+Based on our analysis, no one department thoroughly outperforms others using these metrics. We consider this a strength of our analysis as these metrics can be used to indicate ways in which each department can improve. Some departments did perform better in more areas than others, and based on the data we have determined three departments that are performing well: The Transportation and Public Works departments perform better than average based on their average close times and percentage of calls completed on time. 
+
+```{r avg_close_time_plot}
+avg_close_time_plot
+```
+
+```{r prop_ontime_plot}
+prop_ontime_plot
+```
+
+Aside from Transportation and Public Works we believe that Animal Control is also performing well based on the defined metrics, with it outperforming the city in average close time and only slightly underperforming in the percentage of calls completed on time. In all no one department performs better than average across the board, but these three departments perform well enough that dedicating more resources to them (as defined below) seems unnecessary.
+
+This analysis looks for departments that require more monetary or physical resources to complete their tasks with the assumption that an influx of these resources will improve close times per the chosen metrics. Based on our analysis the Water and Sewer Commission, Property Management, and Inspectional Services deserve more municipal focus. The Water and Sewer Commission is the only department that goes past its target time on average, indicating issues in addressing constituent calls. All departments were the worst performing in terms of punctual call completion, which is likely to be correlated with the complexity or magnitude of the tasks handled by the departments. 
+
+```{r avg_close_target_diff_plot}
+avg_close_target_diff_plot
+```
+
+We identified these three departments based on relatively poor performance compared to other departments and the rest of the city. Each department fields calls that require workers to go out and inspect or address the issue, and so we recommend providing more funds to these departments to add more workers to their teams. The following plot highlights the predominant call for each of the three departments.
+
+```{r focus_dept_task_plot}
+focus_dept_task_plot
+```
+
+# Confounding Factors
+
+Possible confounding factors in the data include the source of the call, which on a cursory analysis has some relation to close time. Other confounding factors could be found by exploring the submitted photos. A clever use of computer vision could help determine particularly difficult calls by analyzing the `submittedphoto` images for obstructions or other items that would make closing the call troublesome.
+
+Confounding factors that could be brought in from outside of the data could include the distance of the call's location from the associated department's dispatch headquarters. This point data could be provided by the City, and each call could be analyzed by overlaying the location of the call to the headquarters data. This would allow for analysts to determine if calls further away from municipal buildings are addressed later than those closer to said buildings. Another data source that could help analysts find confounding factors would be area property values, which are often correlated with the quality of the surroundings. This data is hosted on the [Boston Open Data portal](https://data.boston.gov/dataset/property-assessment) and could be joined using the zip code variables that are shared between the datasets.

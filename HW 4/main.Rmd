@@ -1,0 +1,476 @@
+---
+title: "Boston's 311 Calls"
+author: "Ethan Jantz"
+date: "10/3/2021"
+output: html_document
+---
+
+# Homework 4
+
+## Objective
+
+> The Mayor and his Cabinet have asked the Citywide Analytics Team (us) to look into the City's 311 data and determine the following:
+
+> 1.) How long does it take to complete a request city-wide (hence known as close time)? Provide 3 metrics to answer this question, your reason for choosing those metrics, and what they mean collectively.
+
+> 2.) Assume that the primary goal of your analysis is to ensure that all city departments have as short of a close time as possible. What are the 3 departments that the City should focus on? What are the 3 department that have done well so far?
+
+> 3.) In words, describe 2 confounding factors that can impact the close time of a ticket. You must be able to calculate these confounding factors from the dataset.
+
+> 4.) In words, describe a confounding factor that can impact the close time of a ticket. This factor will come from an outside dataset. Describe how you might find this dataset, and then describe exactly how you will join the outside dataset to the 311 ticket data.
+
+> Restrict your analysis to requests made after January 1, 2020.
+
+## Exploring the Data
+
+The data comes from Boston's [open data portal](https://data.boston.gov/dataset/311-service-requests) and was pulled from the 2020 and 2021 datasets provided. The 2020 and 2021 datasets both share the same columns and column names, so they will be read in and bound together using `bind_rows`.
+
+```{r setup and ingest, message = F}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen = 9999)
+library(dplyr)
+library(forcats)
+library(ggplot2)
+library(here)
+library(kableExtra)
+library(lubridate)
+library(readr)
+
+source(here("Scripts", "funs.R"))
+
+bos_2020 <- read_csv(here("Data", "boston_311_2020.csv"))
+bos_2021 <- read_csv(here("Data", "boston_311_2021.csv"))
+
+# names(bos_2020) == names(bos_2021) # TRUE
+# No changes required to bind these datasets together
+raw_data <- bind_rows(bos_2020, bos_2021)
+
+# crosswalk naming department shorthand values
+# useful when creating summary tables
+departments <- tibble(
+  department = c(
+    raw_data %>%
+      count(department) %>%
+      pull(department)
+    # Resulting values should look like:
+    # [1] "ANML" "BHA_" "BPD_" "BPS_" "BTDT" "BWSC" "DISB" "DND_" "GEN_" "INFO" "ISD"  "No Q" "ONS_" "PARK" "PROP" "PWDx"
+  ),
+  name = c(
+    "Animal Control",
+    "Boston Housing Authority",
+    "Boston Police Department",
+    "Boston Public Schools",
+    "Boston Transportation Department",
+    "Water and Sewer Commission",
+    "Disability Commission",
+    "Neighborhood Development", # Googled "Boston DND" and this was the first thing to come up
+    "General", # This is an assumption, since GEN isn't identified in the data dictionary
+    "Information Channel (Not a Department)",
+    "Inspectional Services",
+    "No Queue",
+    "", # Could not find a convincing answer to what "ONS_" represents in the dictionary or by cursory internet search
+    "Parks",
+    "Property Management",
+    "Public Works"
+  )
+)
+```
+
+The data has 29 columns and 463,383 observations split fairly evenly between the two years. The colums are described below. Each row represents one case. Below is a table describing each column in the data and what it represents.
+
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| Column Name                    | Type | Description                                                                                                     |
++================================+======+=================================================================================================================+
+| case_enquiry_id                | num  | The unique ID for the case                                                                                      |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| open_dt                        | date | The date the case was opened, when the call was made                                                            |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| target_dt                      | date | The date that the case is expected to be closed by                                                              |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| closed_dt                      | date | The date that the case was closed                                                                               |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| ontime                         | char | Indicator for whether the case was closed on time or not                                                        |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| case_status                    | char | Indicator for whether the case is open or closed                                                                |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| closure_reason                 | char | The reason given for closure status and details of work done on the case                                        |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| case_title                     | char | The descriptive title of the case                                                                               |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| subject                        | char | Part of the case classification hierarchy denoting which department a case is assigned to                       |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| reason                         | char | Part of the case classification hierarchy denoting which "umbrella" of similar case types this case falls under |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| type                           | char | Part of the case classification hierarchy denoting which type of case the caller chose                          |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| queue                          | char | The queue the case was assigned to. Departments have multiple queues which reflect the nature of the case       |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| department                     | char | Department the case was assigned to, derived from the first four digits of the queue column                     |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| submittedphoto                 | char | A URL linking to a photo linked to the case, if one was submitted                                               |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| closedphoto                    | char | A URL linking to a photo linked to the case showing the resolution, if one was submitted                        |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| location                       | char | The location of the case being submitted                                                                        |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| fire_district                  | num  | The fire district the case is contained within                                                                  |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| pwd_district                   | char | The public works district tied to a case                                                                        |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| city_council_district          | num  | The city council district the case falls within                                                                 |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| police_district                | char | The police district this case falls within                                                                      |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| neighborhood                   | char | Neighborhood relayed by caller and entered by call taker                                                        |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| neighborhood_services_district | num  | Neighborhood service district the case falls within                                                             |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| ward                           | char | The election ward the case falls within                                                                         |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| precinct                       | char | The election precinct the case falls within                                                                     |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| location_street_name           | char | The street and address the case is located at                                                                   |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| location_zipcode               | char | The zipcode that the case falls within                                                                          |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| latitude                       | num  | The line of latitude the case is located on                                                                     |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| longitude                      | num  | the line of longitude the case is located on                                                                    |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+| source                         | char | The source of the 311 complaint that the case was submitted through                                             |
++--------------------------------+------+-----------------------------------------------------------------------------------------------------------------+
+
+Some quick transformations to make the following analysis easier. This involves converting some column types and removing unresolved cases.
+
+```{r transform 1}
+data <- raw_data %>%
+  mutate(
+    across(ends_with("_dt"), as_datetime),
+    ontime = ifelse(ontime == "OVERDUE", F, T) %>%
+      as.logical(),
+    across(c("case_status", "closure_reason",
+             "subject", "reason", "type", 
+             "queue", "department", "fire_district",
+             "pwd_district", "city_council_district",
+             "police_district", "neighborhood", 
+             "neighborhood_services_district"),
+           as.factor)
+  ) %>%
+  filter(case_status == "Closed")
+```
+
+The first two columns that stick out to me are `case_title` and `closure_reason`, as they can likely provide more nuanced information about the nature of the cases we'll be exploring. They will be useful to answer later questions, but for now we should have enough data on hand to develop metrics for analyzing close time on cases. We've removed the cases that aren't closed, leaving us with approximately 400,000 cases.
+
+### Question 1
+
+There are a few metrics that come to mind readily: Absolute close time, whether the case was closed on time or not, and how far the actual close time is from the target close time. Because this analysis is focused on departmental metrics aggregate values values will be used. Thus, the final metrics created and analyzed in the deliverable will be: 
+
+* Average close time 
+* Percent of calls completed on time
+* Average close time differential
+
+```{r close time}
+data <- data %>%
+  mutate(
+    # variables with "_dt" in the name are date-time variables
+    # SO they can be readily transformed using lubridate functions
+    close_time_seconds_dt = interval(start = open_dt, end = closed_dt) %>%
+      int_length(),
+    target_time_seconds_dt = interval(open_dt, target_dt) %>%
+      int_length(),
+    target_time = target_time_seconds_dt / 60^2, # Convert seconds to hours
+    close_time = close_time_seconds_dt / 60^2,
+    closed_target_diff = close_time - target_time
+  ) %>%
+  select(-close_time_seconds_dt)
+
+data %>%
+  select(case_enquiry_id, open_dt, closed_dt, close_time, closed_target_diff) %>%
+  summarize(
+    across(c(close_time),
+           list(min = min, mean = mean, median = median, max = max))
+  ) %>%
+  t() %>%
+  quickTable()
+```
+
+Visualizing the range
+
+```{r close times histogram}
+data %>%
+  ggplot(aes(x = close_time)) +
+  geom_histogram(bins = 50)
+```
+
+There's a problem with the data. When a case is closed on time it does not have a target_dt value. These need to be imputed so I can do a full analysis using the chosen metrics.
+
+```{r find mean target time by dept}
+target_times <- data %>%
+  group_by(subject, reason, type) %>%
+  summarize(
+    max_target_time = max(target_time),
+    median_target_time = median(target_time),
+    mean_target_time = mean(target_time, rm.na = T),
+    min_target_time = min(target_time),
+    diff = max_target_time - min_target_time
+  )
+
+target_times %>%
+  arrange(desc(diff)) %>%
+  quickTable()
+```
+
+Target times have variance for some, but not all types of calls. There are some wide differences in minimum and maximum target time values, so for the purposes of this work the average time will suffice. It is important in this step to note that some types of calls will not have an imputable target time value because none are recorded. This is a limitation, but shouldn't prevent useful analysis as the majority of call types have real or imputed target times.
+
+```{r impute target time}
+data_imp_target <- data %>%
+  left_join(target_times %>%
+              select(subject, reason, type, mean_target_time), 
+            by = c("subject" = "subject", 
+                   "reason" = "reason",
+                   "type" = "type")) %>%
+  mutate(target_time = coalesce(target_time, mean_target_time)) # Preference goes to existing target times
+
+data_imp_target %>%
+  select(case_enquiry_id, department, subject, reason, type, target_time, mean_target_time) %>%
+  filter(is.na(target_time)) %>% # 63,136 observations still without target times
+  count(department, # doesn't count to the summary, since department and subject are matched
+        subject,
+        reason, type
+        ) %>% # 111 of 539 types of calls still lack target times
+  arrange(desc(n)) %>%
+  mutate(prop = n / sum(n),
+         prop_full = n / dim(data)[1]) %>%
+  quickTable(title = "Missing Target Times by Type of Call")
+
+# data_imp_target <- data_imp_target %>%
+#   filter(!is.na(target_time))
+```
+
+This still leaves NA values in the target times data. The remaining NA values are largely found within two types of calls, "Schedule a Bulk Item Pickup SS" and "Needle Pickup". The rest, on a cursory look, seem to be related to notifying the city of something instead of requiring action. In all, even the largest group here only make up 2% of the full data, so I'll note that but move forward by removing the NA values from `target_time`. 
+
+Now the final metric can be calculated. For the purposes of analysis observations without a target time will be removed.
+
+```{r }
+data_metrics <- data_imp_target %>%
+  mutate(closed_target_diff = close_time - target_time) %>%
+  filter(!is.na(closed_target_diff))
+```
+
+#### Conclude Question 1 Answer
+
+The three metrics I chose, absolute close time, whether the case was closed on time or not, and how far the actual close time is from the target close time, help paint a more robust picture of how departments perform in handling their calls. Absolute close time measures how long a call took from receipt to closure and is a simple metric for analyzing calls both individually and in aggregate in terms of performance. Whether the case was closed on time or not is useful alongside absolute close time to quantify the number of calls that were unable to be resolved or that require more resources to resolve. Lastly, the close time differential from the target time (or average target time in some cases) provides insight into call performance compared to similar calls within the department. These three metrics were chosen because they serve as indicators of good or poor performance in tandem, while still working individually to provide insight into which departments are over- or under-performing.
+
+There are blind spots in these metrics. Average close time will be heavily influenced by the types of tasks that the department carries out and won't make for good interdepartmental comparisons - though putting this metric into departmental context will allow for better targeting of resources. The proportion of calls completed on time by department allows a view into which departments are best performing in terms of addressing constituent calls in general, or alternatively which departments are receiving calls that are unable to be resolved. Large negative close time differential values may not be indicating stellar performance by the department, but instead may point to lax target times. The following section explores these metrics and aims to derive useful insights to include in the final deliverable.
+
+Returning to the initial question, the following table provides the metrics described above at the city level. The average close time for the city is 6.76 days, 89% of calls are completed on time, and the city closes calls 16.08 days earlier than its target on average.
+
+```{r city summary table}
+city_summary_table <- data_metrics %>%
+  summarize(
+    avg_close_time = mean(close_time),
+    prop_ontime = mean(ontime), # Proportion of obs where ontime == TRUE
+    # ontime_size = sum(ontime), # Sum of obs where ontime == TRUE
+    avg_close_target_diff = mean(closed_target_diff)
+  ) %>%
+  mutate(
+    `Average Close Time` = paste0(round(avg_close_time / 24, 2), " days (", round(avg_close_time, 2), " hours)"),
+    `Percent of Calls Completed On Time` = paste0(round(prop_ontime, 2) * 100, "%"),
+    `Average Close Time Differential` = paste0(round(avg_close_target_diff / 24, 2), " days (", round(avg_close_target_diff, 2), " hours)"),
+    .keep = "none"
+  )%>%
+  t()
+
+city_summary_table
+```
+
+### Question 2
+
+Which 3 departments have done well? The answer to this will be based on the metrics defined earlier. Note that we remove three `department` values from the data in this step, `GEN_`, `No Q`, and `INFO`. The first was removed because general calls are primarily assigned as "Needle Pickup", the second was removed because it indicates that a call was incorrectly assigned, and the last because the corresponding department isn't actually a department.  
+
+```{r depts by metrics}
+summary_by_metrics <- data_metrics %>%
+  filter(department %nin% c("No Q", "INFO", "GEN_")) %>% 
+  # department is the department the call was assigned to
+  # subject is the subject of the call, which can match or not match department
+  # this is an important distinction when deciding which variable to group by
+  # this analysis uses the department variable
+  group_by(department) %>%
+  summarize(avg_close_time = mean(close_time),
+            prop_ontime = mean(ontime), # Proportion of obs where ontime == TRUE
+            ontime_size = sum(ontime), # Sum of obs where ontime == TRUE
+            avg_close_target_diff = mean(closed_target_diff),
+            n_size = n()) %>%
+  left_join(departments) %>%
+  select(name, n_size, ontime_size, prop_ontime, avg_close_time, avg_close_target_diff) %>%
+  mutate(prop_size = n_size / sum(n_size)) %>%
+  arrange(avg_close_time)
+
+quickTable(summary_by_metrics, title = "Departments by Summary Metrics", DT = T)
+```
+
+The three departments with the lowest average close times are the Boston Housing Authority, Animal Control, and Boston Public Schools. On the other end are the three worst performing departments, Parks, Neighborhood Development, and Property Management. Of course, by taking only close time into account we lose sight of the bigger picture. This can be explained using a simple plot.
+
+```{r n_size plot}
+n_size_plot <- summary_by_metrics %>%
+  ggplot(aes(x = reorder(name, n_size), y = n_size)) +
+  geom_col() +
+  labs(x = "Department",
+       y = "Calls",
+       title = "Department Calls") +
+  coord_flip()
+
+n_size_plot
+```
+
+As this plot makes apparent, five departments are assigned significantly more calls than the rest. Public Works is assigned more than half of the calls in the data! This makes it difficult to compare departments in terms of how many calls are completed on time. However, using the proportion of calls completed on time pulls useful insight out of this data point.
+
+```{r prop_ontime plot}
+prop_ontime_plot <- summary_by_metrics %>%
+  ggplot(aes(x = reorder(name, prop_ontime), y = prop_ontime, fill = name)) +
+  geom_col() +
+  geom_hline(yintercept = .89, linetype = "dashed") +
+  geom_text(aes(y = .89, x = 2), label = "City Average", vjust = -.5, angle = 90) +
+  scale_y_continuous(labels = scales::percent) +
+  guides(fill = FALSE) +
+  labs(x = "Department",
+       y = "% On-Time Calls",
+       title = "Department by Percentage of Calls Completed On-Time") +
+  coord_flip()
+
+prop_ontime_plot
+```
+
+Most departments underperform compared to the city average of this metric, with only two performing better. The top performing departments in terms of meeting target close times are Public Works, Transportation (the two departments that perform better than average), and the Disability Commission. The lowest performing departments are Inspectional Services, Property Management, and the Water and Sewer Commission. Looking at the Water and Sewer Commission in detail, the majority of calls to this department are for pothole repair. This points to a need for more resources to their pothole team.
+
+```{r avg_close_time plot}
+avg_close_time_plot <- summary_by_metrics %>%
+  ggplot(aes(x = reorder(name, avg_close_time), y = avg_close_time / 24, fill = name)) + # Convert avg_close_time to days from hours
+  geom_col() +
+  geom_hline(yintercept = 6.76, linetype = "dashed") +
+  geom_text(aes(y = 6.76, x = 2), label = "City Average", vjust = -.5, angle = 90) +
+  labs(x = "Department",
+       y = "Average Close Time (days)",
+       title = "Average Close Time by Department") +
+  coord_flip() + 
+  guides(fill = F)
+
+avg_close_time_plot
+```
+
+Most departments perform better than the city average in this metric. The longest average close times are found in the Property Management, Neighborhood Development, and Parks departments. The shortest are found in the Public Schools, Animal Control, and Housing Authority departments. Property Management and Neighborhood Development are the only two departments that have an average close time of over a month. Based on a quick examination of the data, Property Management is assigned calls that have to do with graffiti removal more than anything else. Neighborhood Development fields calls are mostly to do with tree maintenance or removal.
+
+Finally, here is a ranking of departments by their average close time differential.
+
+```{r avg_close_target_diff plot}
+avg_close_target_diff_plot <- summary_by_metrics %>%
+  mutate(pos = ifelse(avg_close_target_diff > 0, T, F)) %>% # For coloring bars by target performance
+  
+  ggplot(aes(x = reorder(name, avg_close_target_diff), y = avg_close_target_diff / 24, fill = pos)) + # Convert avg_close_time to days from hours
+  geom_col() +
+  geom_hline(yintercept = -16.08, linetype = "dashed") +
+  geom_text(aes(y = -16.08, x = 10.5), label = "City Average", vjust = -.5, angle = 90) +
+  scale_fill_hue(direction = -1) +
+  labs(x = "Department",
+       y = "Average Close Time Differential (days)",
+       title = "Average Close Time Differential by Department",
+       subtitle = "(distance of average close time from average target close time)") +
+  coord_flip() + 
+  guides(fill = F)
+
+avg_close_target_diff_plot
+```
+
+The results here are striking, with most departments outperforming their target times. Most departments underperform the city average, though the Neighborhood Development department is heavily skewing this metric at the city level. Only Water and Sewer Commission exceed its target times on average. Neighborhood Development outperforms their target close times by the largest amount, which indicates that there are likely some types of calls that have too long of a target close time. 
+
+It helps to have a table showing which departments perform at or above the city average:
+
+```{r performance table}
+performance_table <- summary_by_metrics %>%
+  select(name, avg_close_time, prop_ontime, avg_close_target_diff) %>%
+  mutate(
+    # TRUE if department outperforms city average
+    `Average Close Time` = ifelse(avg_close_time <= 162.27, "YES", "NO"),
+    `Percent of Calls Completed On Time` = ifelse(prop_ontime >= .89, "YES", "NO"),
+    `Average Close Time Differential` = ifelse(avg_close_target_diff <= -385.98, "YES", "NO")
+  ) %>% 
+  select(name, contains(" ")) %>%
+  arrange(across(contains(" "), desc))
+
+quickTable(performance_table, title = "Does the department perform better than the city average?", DT = T)
+```
+
+#### High Performing Departments
+
+Transportation and Public Works are the only departments that perform better than the city average close time and percentage of calls completed on time. Animal Control performs better than average in close time and only slightly underperforms the city average in its percentage of calls completed on time. In all no one department performs better than average across the board, but these three departments perform well enough that dedicating more resources to them (as defined below) seems unnecessary. 
+
+#### Departments Requiring Focus
+
+Which departments should the city focus on? This analysis looks for departments that require more monetary or physical resources to complete their tasks with the assumption that an influx of these resources will improve close times per the chosen metrics. 
+
+Based on observations made in the previous sections, the Water and Sewer Commission, Property Management, and Inspectional Services deserve more municipal focus. The Water and Sewer Commission is the only department that goes past its target time on average, indicating issues in addressing constituent calls. All departments were the worst performing in terms of punctual call completion, which is likely to be correlated with the complexity or magnitude of the tasks handled by the departments. 
+
+```{r }
+focus_depts <- c("BWSC", "ISD", "PROP")
+
+top_types <- c("Rodent Activity", "Request for Pothole Repair", "Graffiti Removal")
+  
+  # data_metrics %>%
+  # filter(department %in% focus_depts) %>% # 28,462 cases in the study period, or 7% of calls in the data
+  # count(department, type, ontime) %>%
+  # group_by(department) %>%
+  # slice_max(order_by = n, n = 3, with_ties = F) %>%
+  # pull(type)
+  
+focus_dept_task_plot <- data_metrics %>%
+  filter(
+    department %in% focus_depts,
+    type %in% top_types
+  ) %>%
+  left_join(departments) %>%
+  count(name, type, ontime) %>%
+  arrange(desc(n)) %>%
+  # This is hacky, but I'm not wasting a bunch of time trying to make this perfect when I'm just trying to make a quick viz for the deliverable
+  # For some reason I'm just now discovering that pothole requests are submitted across departments.
+  filter(!(name != "Water and Sewer Commission" & type == "Request for Pothole Repair")) %>%
+  
+  
+  ggplot(aes(x = reorder(type, n, FUN = sum), y = n, fill = ontime)) +
+  geom_col() +
+  labs(x = "Call Type",
+       y = "Count",
+       title = "Call Types by Department",
+       subtitle = "scales not uniform") +
+  coord_flip() +
+  facet_wrap(vars(name),
+             ncol = 1,
+             shrink = T,
+             scales = "free",
+             drop = T) +
+  guides(fill = guide_legend(reverse = T))
+
+focus_dept_task_plot
+```
+
+Based on the data, every department has a predominant task: Inspectional Services handles rodent activity (22% of total calls) more than any other type, Property Management largely manages graffiti removal (97% of total calls), and the Water and Sewer Commission manages pothole repairs (72% of total calls). These are labor-intensive tasks, and providing more budgetary funds to hire workers dedicated to those tasks is recommended in order to shorten close times for these three departments. 
+
+### Question 3
+
+Possible confounding factors in the data include the source of the call, which on a cursory analysis has some relation to close time. Other confounding factors could be found by exploring the submitted photos. A clever use of computer vision could help determine particularly difficult calls by analyzing the `submittedphoto` images for obstructions or other items that would make closing the call troublesome.
+
+```{r source_close_time_plot}
+data_metrics %>%
+  group_by(source) %>%
+  summarize(avg_close_time = mean(close_time, na.rm = T)) %>%
+  mutate(source = fct_reorder(source, avg_close_time, mean)) %>%
+  ggplot(aes(x = source, y = avg_close_time)) +
+  geom_col()
+```
+
+### Question 4
+
+Confounding factors that could be brought in from outside of the data could include the distance of the call's location from the associated department's dispatch headquarters. This point data could be provided by the City, and each call could be analyzed by overlaying the location of the call to the headquarters data. This would allow for analysts to determine if calls further away from municipal buildings are addressed later than those closer to said buildings. Another data source that could help analysts find confounding factors would be area property values, which are often correlated with the quality of the surroundings. This data is hosted on the [Boston Open Data portal](https://data.boston.gov/dataset/property-assessment) and could be joined using the zip code variables that are shared between the datasets.
+
+```{r export}
+save.image(file = here("Data", "analysis.RData"))
+```
