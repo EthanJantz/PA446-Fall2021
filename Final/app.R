@@ -18,13 +18,12 @@ library(writexl)
 
 options(scipen = 999999)
 
-# reactlog::reactlog_enable()
-
 # data ----
 most_recent_data_update_dt <- "2021-12-05"
 
 lookup <- read_csv(here("Data", "lookup.csv"))
 records <- read_csv(here("Data", "records.csv"))
+
 
 records_min_dt <- min(
   c(min(records$complaint_date, na.rm = T),
@@ -36,9 +35,7 @@ records_max_dt <- max(
     max(records$inspection_date, na.rm = T))
 )
 
-
 # ui elements ----
-# TODO: Move to ui.R and source when finished
 explore_sidebar <- function() {
   conditionalPanel(
     "input.sidebarid == 'explore'",
@@ -63,7 +60,7 @@ explore_sidebar <- function() {
 
 explore_body <- function (){
   tabItem(tabName = "explore",
-          
+
           fluidRow(
             uiOutput("ibox1"),
             uiOutput("ibox2"),
@@ -83,10 +80,10 @@ map_sidebar <- function() {
     "input.sidebarid == 'map'",
     HTML("Fill out the filters as desired and press <br> 'Generate Map' to view the results.<br>"),
     textInput(inputId = "address_filter",
-              label = "Use this to search by address: ", 
+              label = "Use this to search by address: ",
               value = "",
               placeholder = "e.g. Halsted or 914 Halsted St"),
-    
+
     pickerInput(inputId = "cca_filter_map",
                 label = "Use this dropdown select a community area: ",
                 choices = lookup %>% distinct(community) %>% arrange(community),
@@ -95,7 +92,7 @@ map_sidebar <- function() {
                   actionsBox = T
                 ),
                 multiple = T),
-    
+
     actionButton(inputId = "do",
                  label = "Generate Map")
   )
@@ -105,7 +102,7 @@ map_body <- function() {
   tabItem(tabName = "map",
           # Ensures the map takes up the whole page
           tags$style(type = "text/css", "#lookup_map {height: calc(100vh - 80px) !important;}"),
-          
+
           fluidRow(
             withSpinner(leafletOutput("lookup_map"))
           ),
@@ -129,24 +126,24 @@ about_body <- function() {
           margin-left: 10px;
           margin-right: 10px;
           ",
-          
+
           fluidRow(
-        HTML(paste0("<br>This shiny app was built and deployed by <a href='github.com/ethanjantz'>Ethan Jantz</a> to explore how the Chicago Department of Public Health is handling environmental complaints.<br>
-                
+            HTML(paste0("<br>This shiny app was built and deployed by <a href='github.com/ethanjantz'>Ethan Jantz</a> to explore how the Chicago Department of Public Health is handling environmental complaints.<br>
+
                 <br>In the spirit of participatory government, this dashboard provides general overviews for communities and organizers to understand how their neighborhoods are faring in terms of environmental issues and compare them to other neighborhoods in the city.<p>
 
 Data is pulled from the <a href='https://data.cityofchicago.org/Environment-Sustainable-Development/CDPH-Environmental-Records-Lookup-Table/a9u4-3dwb'>Chicago Open Data Portal</a>. This project was developed using R and Shiny as the final course project for Coding for Civic Applications.<p>
 
 Data was last updated on ", most_recent_data_update_dt,".")
-        )
-      )
+            )
+          )
   )
 }
 
 # ui ----
-ui <- dashboardPage(
+ui <- dashboardPage(title = "CDPH Environmental Response Dashboard",
   
-  dashboardHeader(title = HTML("<h4>CDPH Environmental Response<br /> Dashboard</h4>"),
+  dashboardHeader(title = h4(HTML("CDPH Environmental Response<br /> Dashboard")),
                   titleWidth = 300),
   dashboardSidebar(
     width = 300,
