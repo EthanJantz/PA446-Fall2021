@@ -1,0 +1,208 @@
+---
+title: "Homework 5"
+author: "Ethan Jantz"
+date: "11/19/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen = 999999)
+library(dplyr)
+library(ggplot2)
+library(here)
+library(leaflet)
+library(lubridate)
+library(purrr)
+library(readr)
+library(sf)
+library(stringr)
+library(openxlsx)
+```
+
+# Homework 5
+
+My plan for my final assignment is to use the [CDPH Environmental Records Lookup Table](<https://data.cityofchicago.org/Environment-Sustainable-Development/CDPH-Environmental-Records-Lookup-Table/a9u4-3dwb>) to power a map that can be used to explore environmental complaints at the building level. The lookup table as it exists will require very little wrangling, leaving plenty of room and time to spend on the shiny implementation. 
+
+Intended features:
+
+* An interactive map of building points powered by `leaflet`
+
+* User interaction with the map so that clicking on a point loads a table of all complaints made about the building if any exist
+
+* The ability to use a textInput to filter the map, allowing the user to search for specific addresses
+
+* A complaints tab that allows users to explore trends of complaints by date and type of complaint
+
+This dashboard will serve as an application allowing users to analyze existing environmental complaints data. 
+
+## Data
+
+The following chunk downloads a portion of the data limited by the `api_limit` variable. The full dataset is approximately 55MB, which would bottleneck the dashboard as the user waits for the download to complete. I am currently considering downloading the [complaints data](https://data.cityofchicago.org/widgets/fypr-ksnz) and [inspections data](https://data.cityofchicago.org/widgets/i9rk-duva) separately and including them in the initial load of the dashboard. A simple join between these datasets would allow the user to count complains/inspections and visualize them, then explore relevant buildings using the lookup table.
+
+```{r data wrangling}
+api_limit <- 10000000
+ten_years_ago <- paste0("'", lubridate::today() %m-% years(10), "'")
+today <- paste0("'", lubridate::today(), "'")
+
+cca_shp <- st_read(here("Data", "Spatial", "cca.shp"))
+
+if(!file.exists(here("Data", "lookup.csv"))) {
+  lookup <- read_csv(
+    paste0("https://data.cityofchicago.org/resource/a9u4-3dwb.csv",
+           "?$limit=", api_limit)
+  ) 
+  
+  # Separate because running the mutate in sequence with the above call results in an error
+  lookup_shp <- lookup %>% 
+    mutate(
+      across(c(complaints:holds),
+             ~ifelse(is.na(.x), "N", .x)),
+      complaint_url = str_extract(complaints, "https://data.cityofchicago.org/resource/[^)]*"),
+      inspection_url = str_extract(inspections, "https://data.cityofchicago.org/resource/[^)]*"),
+      permit_url = str_extract(permits, "https://data.cityofchicago.org/resource/[^)]*"),
+    ) %>%
+    filter(!is.na(latitude) & !is.na(longitude)) %>%
+    st_as_sf(coords = c("longitude", "latitude"), crs = st_crs(cca_shp)) %>%
+    # 4 addresses get incorrectly placed off the coast of Africa
+    # this removes them
+    st_filter(cca_shp) %>%
+    # Add community var to data
+    st_join(cca_shp) %>%
+    select(address:permit_url, community) %>%
+    mutate(
+      across(c(complaint_url, inspection_url, permit_url),
+             ~ifelse(is.na(.x), "N", paste0("<a href='", .x, "'>Y</a>")))
+    )
+  
+  
+  lookup <- lookup_shp  %>%
+    mutate(
+      lng = unlist(map(lookup_shp$geometry, 1)),
+      lat = unlist(map(lookup_shp$geometry, 2)),
+      community = stringr::str_to_title(community)
+    ) %>%
+    st_drop_geometry()
+  
+  write_csv(lookup, here("Data", "lookup.csv"))
+  rm("lookup_shp")
+
+} else {
+  lookup <- read_csv(here("Data", "lookup.csv"))
+}
+
+# permits <- read_csv(paste0("https://data.cityofchicago.org/resource/ir7v-8mc8.csv", 
+#                                # "?$where=issue_date>=", ten_years_ago,
+#                                "&$limit=", api_limit)) %>%
+#   mutate(
+#     across(c(application_type, applicant, application_sub_type),
+#            ~stringr::str_to_title(.x)),
+#     across(ends_with("_date"),
+#            ~lubridate::as_date(.x))
+#   )
+
+complaints <- read_csv(paste0("https://data.cityofchicago.org/resource/fypr-ksnz.csv",
+                              "?$where=complaint_date>=", ten_years_ago,
+                              "&$limit=", api_limit)) %>%
+  mutate(
+    type = "complaint",
+    inspector = as.character(inspector),
+    complaint_type = stringr::str_to_title(complaint_type),
+    complaint_date = lubridate::as_date(complaint_date)
+    )
+
+inspections <- read_csv(paste0("https://data.cityofchicago.org/resource/i9rk-duva.csv", 
+                               "?$where=inspection_date>=", ten_years_ago,
+                               "&$limit=", api_limit)) %>%
+  mutate(
+    type = "inspection",
+    address = map_address,
+    inspection_type = stringr::str_to_title(inspection_type),
+    inspection_date = lubridate::as_date(inspection_date)
+  )
+
+records <- bind_rows(complaints, inspections) %>%
+  left_join(
+    y = lookup %>%
+      select(street_number, direction, street_name, street_type, community),
+    by = c("street_number", "direction", "street_name", "street_type")
+  ) %>%
+  distinct() %>%
+  filter(
+    complaint_date <= lubridate::today() |  inspection_date <= lubridate::today()
+  ) %>%
+  mutate(community = stringr::str_to_title(community))
+
+write_csv(records, here("Data", "records.csv"))
+
+rm("inspections", "complaints", "cca_shp")
+# write_csv(complaints, here("Data", "complaints.csv"))
+# write_csv(inspections, here("Data", "inspections.csv"))
+# write_csv(permits, here("Data", "permits.csv")) # Unused for v1.0
+```
+
+Simple filters would allow the user to filter complaints by date so that they could explore trends across time. I'm imagining a separate tab for exploring the complaints data that could tie into the lookup map tab.
+
+## Complaint Visualizations
+
+This example focuses on trends in illegal dumping complaints over the past 5 years. The variables generating the plot have all been abstracted out so that the user can create them using shiny widgets.
+
+```{r complaints demo}
+complaint_focus_type <- ""
+cca_filter <- "EAST GARFIELD PARK"
+start_dt <- lubridate::today() %m-% years(5)
+end_dt <- lubridate::today()
+
+summary <- records %>%
+  filter(
+    # type == "complaint",
+    (complaint_date >= start_dt & complaint_date <= end_dt) |
+      (inspection_date >= start_dt & inspection_date <= end_dt),
+    # (complaint_type %in% complaint_focus_type) | is.na(complaint_type),
+    (is.na(complaint_type) & inspection_type == "Complaint Response") |
+      (is.na(inspection_type) & !is.na(complaint_type)),
+    community %in% cca_filter,
+    # type == "inspection"
+  ) %>%
+  mutate(
+    across(c(complaint_date, inspection_date),
+           ~lubridate::floor_date(.x, unit = "quarters")),
+    type = ifelse(is.na(inspection_date), "complaint", "inspection"),
+    date = coalesce(complaint_date, inspection_date)
+    ) %>%
+  count(type, date)
+
+plotly::ggplotly(
+  ggplot(summary, aes(x = date, y = n, color = type)) +
+    geom_line() +
+    geom_point() +
+    labs(title = "Complaints and Inspections by Quarter",
+         subtitle = stringr::str_to_title(cca_filter),
+         x = "Date",
+         y = "Complaints Received") +
+    ylim(0, NA) +
+    scale_x_date(date_breaks = "1 year", 
+                 date_labels = "%Y",
+                 date_minor_breaks = "3 months")
+)
+```
+
+## Building Explorer
+
+This is a proof of concept for the map, which allows the user to click on clusters to find addresses using the mouse. When they click on an individual building a popup appears that shows the address and whether or not there are any complaints found for that address in the data. I'm planning to utilize observer tools built into shiny to pull ID values for the selected address to generate the complaint tables in real time using the links included in the data. 
+
+This example uses the `address_filter` value of "OGDEN" to find all data included on Ogden Avenue. Please note that this is a very small subset of the full data for demo purposes. 
+
+```{r map demo}
+# address_filter <- "OGDEN"
+
+lookup_shp %>%
+  # filter(stringr::str_detect(address, address_filter)) %>%
+  leaflet() %>%
+  addTiles() %>%
+  addCircleMarkers(
+    clusterOptions = markerClusterOptions(), 
+    popup = ~ paste0("<b>", str_to_title(address), "</b><br>",
+                   "Complaints?: ", complaints)
+  )
+```

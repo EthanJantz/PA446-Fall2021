@@ -220,7 +220,8 @@ gender_table <- gender_table %>%
   
 # The difference in variance between N-size by gender 
 # isn't significant (p < .05) so we'll use the paired t-test
-t.test(gender_table$N_F, gender_table$N_M, alternative = "less", paired = T)
+t.test(gender_table$N_F, gender_table$N_M, 
+       alternative = "less", paired = T)
 # Here we see a significant (p < .05) result from our paired t-test, indicating
 # a significantly smaller value among female employees than male employees across
 # departments.

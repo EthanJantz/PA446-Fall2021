@@ -1,0 +1,33 @@
+Project:
+
+* Client is a Job Placement company
+
+* Job Slots is the product, which takes the form of recurrent job postings that customers can post to. Job Slots are sold as part of a contract and can be sold individually or as part of a package of slots. 
+
+* Jobs can be swapped in and out of Job Slots on the fly over the life of the contract.
+
+* The company doesn't guarantee a specific level of delivery (I'd assume applications or placements), the ad platform tries to assign an application goal based on a variety of factors.
+
+* The algorithm used to traffic job slots uses a bidding system that moves job slots around based on how the job slot is performing compared to its application target. Underperformance increases the bid and overperformance decreases the bid. This bid algorithm affects the ranking of job search results on the company platform. 
+
+Deliverables: 
+
+A1 - Create a pipeline that returns the total contract value for each state by month
+
+A2 - For all employers who purchased >1 prouct, write a pipe to return the job_slots and click_marketplace_value values for the second transaction by the employer.
+
+B1 - Design and propose metrics to measure the quality of services provided to clients. 
+
+B2 - Describe performance in terms of the job_slots, total_contract_value, and click_marketplace_value variabels.
+
+C1 - Which factors or combination thereof best *correlate* with an employer's likelihood to retain (renewed_flag = 1) their contract? How well do your chosen metrics correlate with retention? Explain your chosen method and assumptions made.
+
+QUESTION: This specifically notes correlation, do you want just correlation or are you asking for a causal analysis?
+
+QUESTION: This asks for how well your chosen method correlates with retention, but does that mean the metrics from part B or is this referring to whatever model you design to analyze retention?
+
+C2 - Based on your analysis, what modifications would you recommend we make to the ad platform to improve retention?
+
+Data: 
+
+* Employer_id is the customer, and it's a UID but can appear multiple times based on the number of contracts they've purchased.

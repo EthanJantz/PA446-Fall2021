@@ -1,0 +1,248 @@
+---
+title: "EDA"
+author: "Ethan Jantz"
+date: "10/30/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen = 99999999)
+library(dplyr)
+library(forcats)
+library(ggplot2)
+library(here)
+library(lubridate)
+library(readxl)
+
+file <- here("Data", "Raw", "midterm.xlsx")
+
+raw_performance <- read_xlsx(file, sheet = 2)
+raw_location <- read_xlsx(file, sheet = 3)
+
+data <- left_join(raw_performance,
+                  raw_location,
+                  by = c("city_id")) %>%
+  mutate(
+    across(c(job_slots:job_listings), as.numeric),
+    across(ends_with(c("_id", "_name")), ~ as.character(as_factor(.x))),
+    across(ends_with("_date"), as_date),
+    renewed_flag = as.logical(renewed_flag)
+  )
+```
+
+```{r eda}
+skimr::skim(data)
+```
+
+There are no missing values, though the `contract_id` field only has 37,581 unique values when it should have as many unique values as the number of rows theoretically. Looking into that it seems that there are 166 `contract_id` values with more than one instance. The contract with the most instances is 1692528, appearing 6 times. It seems that these duplicate contracts are instances where the same contract was applied across multiple locations.
+
+Most contracts provide 15 job slots, though some provide more. 
+
+```{r dupe contract_id example}
+data %>% 
+  filter(contract_id %in% c("1692528"))
+```
+
+# R Scripting
+
+Total Contract Value is defined as the total amount that customers committed to spend. Write R tidyverse pipe that returns the Total Contract Value ('total_contract_value' field) for each state (name) by month (using 'start_date') in the provided datasets.
+
+```{r A1}
+data %>%
+  group_by(year(start_date), month(start_date), state_name) %>%
+  summarize(sum(total_contract_value)) %>%
+  rename(
+    year = `year(start_date)`,
+    month = `month(start_date)`,
+    state = `state_name`,
+    total_contract_value = `sum(total_contract_value)`
+  )
+```
+
+For all employers who purchased >1 product with [REDACTED], write a R tidyverse pipe to return the 'job_slots' and 'click_marketplace_value' values for the second transaction by employer.
+
+I'm assuming a "product" is a contract, and not a job slot. In the data, one observation is one contract.
+
+```{r A2}
+data %>%
+  group_by(employer_id) %>%
+  slice(2) %>%
+  select(employer_id, contract_id, job_slots, click_marketplace_value)
+```
+
+# Metrics
+
+What metrics would you propose to measure the quality of services [REDACTED] provided to our clients? How does performance vary in terms of:
+
+* `job_slots`
+* `total_contract_value`
+* `click_marketplace_value`
+
+The metrics I came up with are: 
+* Number of applications delivered as a simple metric
+* `click_marketplace_value` - `total_contract_value`, which we'll call `delivered_value`
+* The ratio of `click_marketplace_value` for the contract to the median for the same location
+* The percentage of `apply_start_clicks` that led to actual applications
+
+```{r metrics}
+data_metrics <- data %>%
+  # Generate median click_marketplace_value for cities
+  left_join(
+    data %>% 
+      group_by(city_name, state_name) %>%
+      summarize(median_cmp = median(click_marketplace_value)),
+    by = c("state_name", "city_name")
+  ) %>%
+  mutate(
+    cmp_ratio = round(click_marketplace_value / median_cmp, 2),
+    delivered_value = click_marketplace_value - total_contract_value,
+    click_value = click_marketplace_value / apply_start_clicks,
+    click_thru = applications / apply_start_clicks,
+    .after = click_marketplace_value
+  )
+```
+
+Let's explore the performance variables using some simple plots.
+
+```{r metric comp job_slots}
+data_metrics %>%
+  mutate(job_slots = as.factor(job_slots)) %>%
+  ggplot(aes(x = job_slots, y = cmp_ratio)) +
+  geom_col()
+
+data_metrics %>%
+  mutate(job_slots = as.factor(job_slots)) %>%
+  ggplot(aes(x = job_slots, y = delivered_value)) +
+  geom_violin() +
+  labs(title = "Distribution of Delivered Value by Job Slots Package",
+       x = "Job Slots",
+       y = "Delivered Value") +
+  scale_y_continuous(labels = scales::comma) +
+  coord_flip()
+
+data_metrics %>%
+  mutate(job_slots = as.factor(job_slots)) %>%
+  ggplot(aes(x = job_slots, y = applications)) +
+  geom_violin() +
+  labs(title = "Distribution of Applications by Job Slots Package",
+       x = "Job Slots",
+       y = "Applications Received") +
+  scale_y_continuous(labels = scales::comma) +
+  coord_flip()
+
+data_metrics %>%
+  ggplot(aes(x = job_slots, y = click_thru)) +
+  geom_col()
+```
+
+`job_slots` has only two possible values in the data, 15 or 50. Expectedly, the number of applications generally increased with the number of job slots in the contract. Contracts with more job slots seem to perform better in terms of delivered value, and our `cmp_ratio` metric doesn't seem to have a strong relation on a cursory look.
+
+```{r metric comp total_contract_value}
+data_metrics %>%
+  ggplot(aes(x = total_contract_value, y = cmp_ratio)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+data_metrics %>%
+  ggplot(aes(x = total_contract_value, y = delivered_value)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+data_metrics %>%
+  ggplot(aes(x = total_contract_value, y = applications)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+data_metrics %>%
+  ggplot(aes(x = total_contract_value, y = click_thru)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(title = "Application Throughput by Contract Value",
+       x = "Contract Value",
+       y = "Percent of Applications Completed After Started") + 
+  scale_y_continuous(labels = scales::percent)
+```
+
+`delivered_value` contains `total_contract_value` in its calculation, so this isn't the most useful comparison. We see that the number of applications increases with the value of the contract. `cmp_ratio` doesn't have a relationship with contract value, which makes sense. 
+
+```{r metric comp click_marketplace_value}
+data_metrics %>%
+  ggplot(aes(x = click_marketplace_value, y = cmp_ratio)) +
+  geom_jitter() +
+  geom_smooth(method = "lm")
+
+data_metrics %>%
+  ggplot(aes(x = click_marketplace_value, y = delivered_value)) +
+  geom_jitter() +
+  geom_smooth(method = "lm")
+
+data_metrics %>%
+  ggplot(aes(x = click_marketplace_value, y = applications)) +
+  geom_jitter() +
+  geom_smooth(method = "lm") +
+  labs(title = "Applications and Click Marketplace Value",
+       x = "Click Marketplace Value",
+       y = "Applications Received")
+
+data_metrics %>%
+  ggplot(aes(x = click_marketplace_value, y = click_thru)) +
+  geom_jitter() +
+  geom_smooth(method = "lm")
+```
+Looking through these plots I am convinced that the number of applications is a relevant metric, as it seems to stand out across all three of the variables we're comparing against. `cmp_ratio` is interesting theoretically, but doesn't seem to relate to any of the comparisons. `delivered_value` directly correlates with `click_marketplace_value` because it uses it in calculation. 
+
+# Modeling
+
+Which factors or combination of factors best correlate with an employer's likelihood to retain (i.e. renewed_flag = 1)? And how well does your chosen factors correlate with retention? Please list any assumptions you made and explain why you chose your methodology.
+
+I would guess that the `delivered_value`, `applications`, and `job_listings` have some relationship to whether or not an employer will renew their contract. I'll build a logistic regression model to look at this relationship starting by looking at how `delivered_value` alone relates to the response variable.
+
+I'm assuming that we're not worried about location, so I won't be controlling for city or state in this analysis. I'll be using logistic regression because the goal is to understand which factors are related to an employer's likelihood to renew, which is a binary variable. This is a question that logistic regression is better suited for than OLS regression.
+
+```{r modeling 1}
+# Rescaling variables for easier interpretation
+data_metrics <- data_metrics %>%
+  mutate(
+    delivered_value_100s = delivered_value / 100,
+    click_marketplace_value_100s = click_marketplace_value / 100
+    )
+
+renew_model <- glm(data = data_metrics, 
+                   renewed_flag ~ delivered_value_100s,
+                   family = binomial(link = "logit"))
+
+summary(renew_model)
+
+exp(coef(renew_model))
+```
+
+There's a significant positive relationship between `delivered_value` and whether or not the employer renewed their contract, with every 100 dollar increase increasing the odds of a renewal by 1.5%. Let's incorporate the other variables to explore this relationship further.
+
+```{r modeling 2}
+renew_model <- glm(data = data_metrics,
+                   renewed_flag ~ total_contract_value + delivered_value_100s + job_listings + applications + apply_start_clicks,
+                   family = binomial(link = "logit"))
+
+summary(renew_model)
+
+exp(coef(renew_model))
+```
+
+All of these factors are significant. Here we can see that `delivered_value` has a stronger relationship when controlling for `total_contract_value`, `job_listings`, `applications`, and `apply_start_clicks`. Now every 100 dollar increase in delivered value increases the odds of a renewal by 2%! I want to run one final model to cover my bases.
+
+```{r modeling 3}
+renew_model <- glm(data = data_metrics,
+                   renewed_flag ~ total_contract_value + click_marketplace_value_100s + job_listings + job_slots + applications + apply_start_clicks,
+                   family = binomial(link = "logit"))
+
+summary(renew_model)
+
+exp(coef(renew_model))
+```
+
+We see the same result if we replace `delivered_value` with `click_marketplace_value`, which makes sense since the former is derived from the latter. This means that when our company delivers more than what the client paid for they're more likely to renew. On the other hand, it seems that the chances of renewal go down the more applications, apply start clicks, and job listings an employer receives. Employers with larger contract values are also less likely to renew, though none of these relationships are as strong as `click_marketplace_value`.
+
+Based on your analysis, what modifications would you recommend we make to our ad platform algorithm to improve retention?
+
+
